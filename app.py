@@ -163,9 +163,9 @@ def schedule_all_step_emails(customers, edited_mails, scheduled_dates, group_nam
         recipient = customer['email']
         
         for idx, (edited_mail, scheduled_dt, step_name) in enumerate(zip(edited_mails, scheduled_dates, step_names), 1):
-            # 宛名を顧客名に置換
+            # 宛名を先頭に追加
             subject = edited_mail["subject"]
-            body = edited_mail["body"].replace("お客様", customer_name)
+            body = f"{customer_name} 様\n\n{edited_mail['body']}"
             
             # タスク名を生成（ユニーク）
             task_name = f"EmailSend_{group_name.replace(' ', '')}_{customer_name.replace(' ', '')}_{recipient.split('@')[0]}_Step{idx}_{scheduled_dt.strftime('%Y%m%d%H%M')}"
@@ -388,7 +388,7 @@ def main():
                 **トーン:** {tones_str}  
                 **商品名:** {group_config['topic']}  
                 **詳細:** {group_config['key_points']}  
-                **作成日時:** {group_config.get('created_at', 'N/A')}
+                **作成日時:** {created_at}
                 """)
                 
                 st.markdown("---")
@@ -423,14 +423,6 @@ def main():
                     
                     # このグループの顧客を表示（最新の状態を取得）
                     group_customers = customer_manager.get_customers_by_group(group_name)
-                    
-                    # デバッグ情報（一時的）
-                    with st.expander("🔍 デバッグ情報", expanded=False):
-                        st.write(f"全顧客数: {len(customer_manager.get_customers())}")
-                        st.write(f"グループ '{group_name}' の顧客数: {len(group_customers)}")
-                        st.write("全顧客のグループ割り当て状況:")
-                        for i, c in enumerate(customer_manager.get_customers()):
-                            st.write(f"  [{i}] {c['name']} → グループ: {c.get('group', 'None')}")
                     
                     st.markdown(f"**現在の顧客数:** {len(group_customers)}名")
                     
@@ -550,9 +542,25 @@ def main():
         st.header("ステップ5: ステップメールプレビュー")
         
         group_name = st.session_state.current_group
+        group_customers = customer_manager.get_customers_by_group(group_name)
         generated_mails = st.session_state.generated_mails
         
-        st.info(f"📌 グループ: **{group_name}**")
+        st.info(f"📌 グループ: **{group_name}** / 顧客数: **{len(group_customers)}名**")
+        
+        # 顧客選択（プレビュー用）
+        if group_customers:
+            st.markdown("##### 👤 プレビュー用顧客選択")
+            customer_options = [f"{c['name']} ({c['email']})" for c in group_customers]
+            selected_customer_idx = st.selectbox(
+                "メールのプレビューを表示する顧客を選択",
+                range(len(group_customers)),
+                format_func=lambda i: customer_options[i],
+                key="preview_customer_step"
+            )
+            preview_customer_name = group_customers[selected_customer_idx]['name']
+            st.caption("💡 メール送信時に、選択した顧客の名前が宛名として自動挿入されます")
+        else:
+            preview_customer_name = "顧客名"
         
         # 複数トーンのタブを作成
         tone_tabs = st.tabs([f"トーン: {tone}" for tone in generated_mails.keys()])
@@ -567,10 +575,19 @@ def main():
                     with st.expander(f"✉️ {step_idx}通目: {step_name}（{timing}）", expanded=(step_idx == 1)):
                         if mail.get("status") == "success":
                             st.markdown(f"**件名:** {mail.get('subject', 'N/A')}")
+                            
+                            # 宛名プレビュー（編集不可）
+                            st.markdown("**宛名（送信時に自動挿入）:**")
+                            st.code(f"{preview_customer_name} 様", language="text")
+                            
+                            # 本文から「お客様」を削除してプレビュー
+                            original_body = mail.get("body", "")
+                            body_without_salutation = original_body.replace("お客様\n\n", "").replace("お客様\n", "").replace("お客様", "", 1)
+                            
                             st.text_area(
                                 "本文",
-                                value=mail.get("body", ""),
-                                height=250,
+                                value=body_without_salutation,
+                                height=220,
                                 key=f"preview_body_{tone}_{step_idx}",
                                 disabled=True
                             )
@@ -579,9 +596,23 @@ def main():
                 
                 # トーンごとの確定ボタン
                 if st.button(f"✅ このトーン「{tone}」で確定", type="primary", use_container_width=True, key=f"confirm_{tone}"):
+                    # 本文から「お客様」を削除して保存
+                    cleaned_mails = []
+                    for mail in mails:
+                        if mail.get("status") == "success":
+                            original_body = mail.get("body", "")
+                            cleaned_body = original_body.replace("お客様\n\n", "").replace("お客様\n", "").replace("お客様", "", 1)
+                            cleaned_mails.append({
+                                "status": mail.get("status"),
+                                "subject": mail.get("subject"),
+                                "body": cleaned_body
+                            })
+                        else:
+                            cleaned_mails.append(mail)
+                    
                     st.session_state.selected_pattern = {
                         'tone': tone,
-                        'mails': mails
+                        'mails': cleaned_mails
                     }
                     st.rerun()
         
@@ -598,9 +629,25 @@ def main():
         st.header("ステップ5: ダイレクトメールプレビュー")
         
         group_name = st.session_state.current_group
+        group_customers = customer_manager.get_customers_by_group(group_name)
         generated_mails = st.session_state.generated_mails
         
-        st.info(f"📌 グループ: **{group_name}**")
+        st.info(f"📌 グループ: **{group_name}** / 顧客数: **{len(group_customers)}名**")
+        
+        # 顧客選択（プレビュー用）
+        if group_customers:
+            st.markdown("##### 👤 プレビュー用顧客選択")
+            customer_options = [f"{c['name']} ({c['email']})" for c in group_customers]
+            selected_customer_idx = st.selectbox(
+                "メールのプレビューを表示する顧客を選択",
+                range(len(group_customers)),
+                format_func=lambda i: customer_options[i],
+                key="preview_customer_direct"
+            )
+            preview_customer_name = group_customers[selected_customer_idx]['name']
+            st.caption("💡 メール送信時に、選択した顧客の名前が宛名として自動挿入されます")
+        else:
+            preview_customer_name = "顧客名"
         
         # 複数トーンのタブを作成
         tone_tabs = st.tabs([f"トーン: {tone}" for tone in generated_mails.keys()])
@@ -611,18 +658,34 @@ def main():
                 
                 if mail.get("status") == "success":
                     st.markdown(f"**件名:** {mail.get('subject', 'N/A')}")
+                    
+                    # 宛名プレビュー（編集不可）
+                    st.markdown("**宛名（送信時に自動挿入）:**")
+                    st.code(f"{preview_customer_name} 様", language="text")
+                    
+                    # 本文から「お客様」を削除してプレビュー
+                    original_body = mail.get("body", "")
+                    body_without_salutation = original_body.replace("お客様\n\n", "").replace("お客様\n", "").replace("お客様", "", 1)
+                    
                     st.text_area(
                         "本文",
-                        value=mail.get("body", ""),
-                        height=400,
+                        value=body_without_salutation,
+                        height=350,
                         key=f"preview_direct_body_{tone}",
                         disabled=True
                     )
                     
                     if st.button(f"✅ このトーン「{tone}」で確定", type="primary", use_container_width=True, key=f"confirm_direct_{tone}"):
+                        # 本文から「お客様」を削除して保存
+                        cleaned_body = original_body.replace("お客様\n\n", "").replace("お客様\n", "").replace("お客様", "", 1)
+                        
                         st.session_state.selected_direct_mail = {
                             'tone': tone,
-                            'mail': mail
+                            'mail': {
+                                "status": mail.get("status"),
+                                "subject": mail.get("subject"),
+                                "body": cleaned_body
+                            }
                         }
                         st.rerun()
                 else:
@@ -644,7 +707,21 @@ def main():
         group_customers = customer_manager.get_customers_by_group(group_name)
         
         mail_data = st.session_state.selected_direct_mail
-        st.info(f"📌 グループ: **{group_name}** / トーン: **{mail_data['tone']}**")
+        st.info(f"📌 グループ: **{group_name}** / トーン: **{mail_data['tone']}** / 顧客数: **{len(group_customers)}名**")
+        
+        # 顧客選択（プレビュー用）
+        if group_customers:
+            st.markdown("##### 👤 プレビュー用顧客選択")
+            customer_options = [f"{c['name']} ({c['email']})" for c in group_customers]
+            selected_customer_idx = st.selectbox(
+                "メールのプレビューを表示する顧客を選択",
+                range(len(group_customers)),
+                format_func=lambda i: customer_options[i],
+                key="edit_preview_customer_direct"
+            )
+            preview_customer_name = group_customers[selected_customer_idx]['name']
+        else:
+            preview_customer_name = "顧客名"
         
         # 編集可能フォーム
         edited_subject = st.text_input(
@@ -653,11 +730,19 @@ def main():
             key="edit_direct_subject"
         )
         
+        # 宛名プレビュー（編集不可）
+        st.markdown("**本文:**")
+        st.caption("💡 メール送信時に自動的に「{顧客名} 様」が先頭に追加されます")
+        st.markdown("**宛名（送信時に自動挿入）:**")
+        st.code(f"{preview_customer_name} 様", language="text")
+        
+        # 本文編集（宛名は含めない）
         edited_body = st.text_area(
-            "本文（編集可能）",
+            "本文内容（編集可能）",
             value=mail_data['mail'].get("body", ""),
-            height=400,
-            key="edit_direct_body"
+            height=320,
+            key="edit_direct_body",
+            help="宛名（{顧客名} 様）は送信時に自動的に先頭に追加されます。こちらには本文のみを入力してください。"
         )
         
         st.info(f"送信先: {len(group_customers)}名の顧客に送信されます")
@@ -667,8 +752,8 @@ def main():
         with col1:
             if st.button("📧 メールクライアント起動", type="primary", use_container_width=True):
                 for customer in group_customers:
-                    # 宛名を顧客名に置換
-                    personalized_body = edited_body.replace("お客様", customer['name'])
+                    # 宛名を先頭に追加
+                    personalized_body = f"{customer['name']} 様\n\n{edited_body}"
                     open_mail_clients([customer['email']], edited_subject, personalized_body)
                 
                 st.success(f"✅ {len(group_customers)}件のメールクライアントを起動しました")
@@ -690,7 +775,22 @@ def main():
         group_customers = customer_manager.get_customers_by_group(group_name)
         
         pattern = st.session_state.selected_pattern
-        st.info(f"📌 グループ: **{group_name}** / トーン: **{pattern['tone']}**")
+        st.info(f"📌 グループ: **{group_name}** / トーン: **{pattern['tone']}** / 顧客数: **{len(group_customers)}名**")
+        
+        # 顧客選択（プレビュー用）
+        if group_customers:
+            st.markdown("##### 👤 プレビュー用顧客選択")
+            customer_options = [f"{c['name']} ({c['email']})" for c in group_customers]
+            selected_customer_idx = st.selectbox(
+                "メールのプレビューを表示する顧客を選択",
+                range(len(group_customers)),
+                format_func=lambda i: customer_options[i],
+                key="edit_preview_customer_step"
+            )
+            preview_customer_name = group_customers[selected_customer_idx]['name']
+            st.caption("💡 メール送信時に、各顧客の名前が宛名として自動挿入されます")
+        else:
+            preview_customer_name = "顧客名"
         
         # 送信予定日時のデフォルト値を計算
         if "scheduled_dates" not in st.session_state:
@@ -749,11 +849,19 @@ def main():
                         key=f"edit_subject_{step_idx}"
                     )
                     
+                    # 宛名プレビュー（編集不可）
+                    st.markdown("**本文:**")
+                    st.caption("💡 メール送信時に自動的に「{顧客名} 様」が先頭に追加されます")
+                    st.markdown("**宛名（送信時に自動挿入）:**")
+                    st.code(f"{preview_customer_name} 様", language="text")
+                    
+                    # 本文編集
                     edited_body = st.text_area(
-                        "本文（編集可能）",
+                        "本文内容（編集可能）",
                         value=st.session_state.edited_mails[step_idx - 1]["body"],
-                        height=300,
-                        key=f"edit_body_{step_idx}"
+                        height=250,
+                        key=f"edit_body_{step_idx}",
+                        help="宛名（{顧客名} 様）は送信時に自動的に先頭に追加されます。"
                     )
                     
                     # 編集内容を保存
@@ -839,8 +947,8 @@ def main():
                         subject = edited_mail["subject"]
                         body = edited_mail["body"]
                         
-                        # 宛名を顧客名に置換
-                        personalized_body = body.replace("お客様", customer['name'])
+                        # 宛名を先頭に追加
+                        personalized_body = f"{customer['name']} 様\n\n{body}"
                         
                         # 送信予定日時を本文に追記
                         scheduled_dt = st.session_state.scheduled_dates[idx - 1]
