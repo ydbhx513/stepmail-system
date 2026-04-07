@@ -604,7 +604,7 @@ def render_product_scraper_panel(body_key: str, current_body: str,
     with st.expander("🛒 商品情報を一覧から差し込む", expanded=False):
 
         st.caption("例: https://nishidaya.com/c/all-item/gr30")
-        st.caption("※デモ版では久原本家Webサイトは未対応のため他サイトでお試しください"）
+        st.caption("※デモ版では久原本家Webサイトは未対応のため他サイトでお試しください")
 
         col_url, col_btn = st.columns([4, 1])
         with col_url:
